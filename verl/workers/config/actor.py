@@ -229,6 +229,8 @@ class FSDPActorConfig(ActorConfig):
     ulysses_sequence_parallel_size: int = 1
     entropy_from_logits_with_chunking: bool = False
     entropy_checkpointing: bool = False
+    self_certainty_from_logits_with_chunking: bool = False
+    self_certainty_checkpointing: bool = False
     fsdp_config: FSDPEngineConfig = field(default_factory=FSDPEngineConfig)
     use_remove_padding: bool = False
     profiler: ProfilerConfig = field(default_factory=ProfilerConfig)

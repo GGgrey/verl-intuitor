@@ -105,6 +105,8 @@ class AdvantageEstimator(str, Enum):
     GPG = "gpg"
     RLOO_VECTORIZED = "rloo_vectorized"
     GRPO_VECTORIZED = "grpo_vectorized"
+    INTUITOR = "intuitor"
+    UCAS = "ucas"
 
 
 ADV_ESTIMATOR_REGISTRY: dict[str, Any] = {}
@@ -326,6 +328,100 @@ def compute_grpo_outcome_advantage(
         scores = scores.unsqueeze(-1) * response_mask
 
     return scores, scores
+
+
+@register_adv_est(AdvantageEstimator.UCAS)
+def compute_ucas_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    self_certaintys: torch.Tensor,
+    raw_logits: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+    config: Optional[AlgoConfig] = None,
+):
+    if self_certaintys.shape != response_mask.shape:
+        raise ValueError(
+            f"self_certaintys shape {self_certaintys.shape} must match response_mask shape {response_mask.shape}"
+        )
+    
+    alpha = config.get("alpha", 0.25)
+    beta = config.get("beta", 0.01)
+    
+    scores = token_level_rewards.sum(dim=-1)
+    id2score = defaultdict(list)
+    id2mean = {}
+    id2std = {}
+
+    correct_mask = (scores == 1.0)
+    wrong_mask = (scores == 0.0)
+
+    id2confs = defaultdict(list)
+    id2conf_mean = {}
+    id2conf_std = {}
+    response_length = response_mask.sum(dim=-1).clamp_min(1.0)
+    confidences = (self_certaintys * response_mask).sum(dim=-1) / response_length
+    if scores.shape != confidences.shape:
+        raise ValueError(
+            f"confidences shape {confidences.shape} must match scores shape {scores.shape}"
+        )
+    
+    with torch.no_grad():
+        bsz = scores.shape[0]
+        for i in range(bsz):
+            id2score[index[i]].append(scores[i])
+            id2confs[index[i]].append(confidences[i])
+        for idx in id2score:
+            if len(id2score[idx]) == 1:
+                id2mean[idx] = torch.tensor(0.0)
+                id2std[idx] = torch.tensor(1.0)
+                id2conf_mean[idx] = torch.tensor(0.0)
+                id2conf_std[idx] = torch.tensor(1.0)
+            elif len(id2score[idx]) > 1:
+                scores_tensor = torch.stack(id2score[idx])
+                id2mean[idx] = torch.mean(scores_tensor)
+                id2std[idx] = torch.std(scores_tensor)
+                confs_tensor = torch.stack(id2confs[idx])
+                id2conf_mean[idx] = torch.mean(confs_tensor)
+                id2conf_std[idx] = torch.std(confs_tensor)
+            else:
+                raise ValueError(f"No score in prompt index: {idx}")
+        for i in range(bsz):
+            if norm_adv_by_std_in_grpo:
+                scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
+                confidences[i] = (confidences[i] - id2conf_mean[index[i]]) / (id2conf_std[index[i]] + epsilon)
+            else:
+                scores[i] = scores[i] - id2mean[index[i]]
+                confidences[i] = confidences[i] - id2conf_mean[index[i]]
+
+        A_hat = scores
+        C_hat = confidences
+
+        W = torch.where(
+            A_hat > 0,
+            torch.exp(-alpha * C_hat),
+            torch.exp(alpha * C_hat),
+        )
+        A_mod = W * A_hat
+
+        pos_inf = torch.tensor(float("inf"), device=raw_logits.device, dtype=raw_logits.dtype)
+        neg_inf = torch.tensor(float("-inf"), device=raw_logits.device, dtype=raw_logits.dtype)
+
+        masked_for_min = torch.where(response_mask.bool(), raw_logits, pos_inf)
+        masked_for_max = torch.where(response_mask.bool(), raw_logits, neg_inf)
+
+        l_min = masked_for_min.min(dim=-1, keepdim=True).values
+        l_max = masked_for_max.max(dim=-1, keepdim=True).values
+        denom = (l_max - l_min).clamp_min(epsilon)
+
+        l_hat = (raw_logits - l_min) / denom
+        l_hat = l_hat * response_mask
+
+        A_mod_tok = A_mod.unsqueeze(-1) * response_mask
+        adv_ucas = A_mod_tok - beta * l_hat
+
+        return adv_ucas, adv_ucas
 
 
 @register_adv_est(AdvantageEstimator.GRPO_VECTORIZED)

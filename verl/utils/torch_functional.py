@@ -160,6 +160,22 @@ def entropy_from_logits_with_chunking(logits: torch.Tensor, chunk_size: int = 20
     return entropy
 
 
+def self_certainty_from_logits(logits: torch.Tensor):
+    """Calculate self-certainty from logits."""
+    self_certainty = torch.logsumexp(logits, dim=-1) - logits.mean(dim=-1)
+    return self_certainty
+
+
+def self_certainty_from_logits_with_chunking(logits: torch.Tensor, chunk_size: int = 2048):
+    """Memory-efficient self-certainty calculation with chunking."""
+    self_certainty = torch.zeros(logits.shape[0], device=logits.device)
+    for i in range(0, logits.shape[0], chunk_size):
+        logits_chunk = logits[i : i + chunk_size].float()
+        self_certainty_chunk = torch.logsumexp(logits_chunk, dim=-1) - logits_chunk.mean(dim=-1)
+        self_certainty[i : i + chunk_size] = self_certainty_chunk
+    return self_certainty
+
+
 def masked_sum(values, mask, axis=None):
     """Compute mean of tensor with a masked values."""
     # If NaNs exist out of mask, replace NaNs in values with a value that
