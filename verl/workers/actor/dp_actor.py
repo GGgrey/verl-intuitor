@@ -443,7 +443,7 @@ class DataParallelPPOActor(BasePPOActor):
             if calculate_entropy:
                 entropys = restore_dynamic_batch(entropys, batch_idx_list)
             if calculate_self_certainty:
-                self_certaintys = restore_dynamic_batch()(self_certaintys, batch_idx_list)
+                self_certaintys = restore_dynamic_batch(self_certaintys, batch_idx_list)
 
         return log_probs, raw_logits, entropys, self_certaintys
 
