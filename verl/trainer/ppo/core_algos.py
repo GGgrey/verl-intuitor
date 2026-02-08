@@ -354,9 +354,6 @@ def compute_ucas_outcome_advantage(
     id2mean = {}
     id2std = {}
 
-    correct_mask = (scores == 1.0)
-    wrong_mask = (scores == 0.0)
-
     id2confs = defaultdict(list)
     id2conf_mean = {}
     id2conf_std = {}
